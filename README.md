@@ -4,6 +4,8 @@ Prototype: open a web page in a "canvas" that behaves like a Rex pane, beside an
 
 Rex's Mac app can only draw terminal panes. rex-canvas splits the agent's pane as usual, runs a small placeholder program in the new pane, and draws a borderless WebKit window exactly over that pane's terminal area. Rex stays in charge of the layout. Resizing, zooming, switching tabs and closing the pane all work as they would for any pane, and the canvas follows.
 
+![An agent opens a page in a canvas beside its Rex pane. The divider is dragged both ways, the heading is copied from the canvas into the agent, and a sentence is typed into the page.](docs/demo.gif)
+
 ## Install
 
 Requirements: macOS 14 or later, the Xcode command line tools (`xcode-select --install`) and [Rex](https://www.superlogical.com/rex/docs).

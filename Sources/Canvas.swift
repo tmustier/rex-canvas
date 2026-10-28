@@ -10,6 +10,11 @@ final class CanvasWebView: WKWebView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// Toolbar buttons act on the first click, even when the canvas isn't the active window yet.
+final class FirstClickButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 /// Receives `window.rexCanvas.ask(...)` from the page. Pages can only open the ask field;
 /// sending always needs the person to press Enter.
 private final class PageBridge: NSObject, WKScriptMessageHandler {
@@ -94,7 +99,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
     private let bridge = PageBridge()
     private let titleLabel = NSTextField(labelWithString: "")
     private let askField = NSTextField()
-    private let askButton = NSButton()
+    private let askButton = FirstClickButton()
     private var observations: [NSKeyValueObservation] = []
     private var noticeUntil = Date.distantPast
 
@@ -162,7 +167,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
             ("arrow.clockwise", "Reload (⌘R)", #selector(reload)),
         ]
         for (index, (symbol, tip, action)) in symbols.enumerated() {
-            let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, target: self, action: action)
+            let button = FirstClickButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, target: self, action: action)
             button.isBordered = false
             button.toolTip = tip
             button.frame = NSRect(x: 6 + CGFloat(index) * 24, y: 5, width: 22, height: 20)
@@ -224,6 +229,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
     // MARK: Ask
 
     func showAsk(prefill: String) {
+        guard shown else { return }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         titleLabel.isHidden = true
