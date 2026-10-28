@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field notes</title>
+<style>
+  :root { color-scheme: light; --ink: #1d232a; --muted: #6b7480; --line: #e4e1da; --paper: #fbfaf6; --accent: #2f6f5e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.55 ui-serif, Georgia, serif; color: var(--ink); background: var(--paper); }
+  main { max-width: 680px; margin: 0 auto; padding: 48px 32px 80px; }
+  header p { margin: 0; color: var(--muted); font: 13px/1.4 ui-sans-serif, -apple-system, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; }
+  h1 { margin: 6px 0 28px; font-size: 40px; line-height: 1.1; letter-spacing: -0.01em; }
+  h2 { margin: 36px 0 8px; font-size: 20px; }
+  [contenteditable]:focus { outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); outline-offset: 4px; border-radius: 2px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 16px; }
+  .card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: white; font-family: ui-sans-serif, -apple-system, sans-serif; }
+  .card b { display: block; font-size: 24px; color: var(--accent); }
+  .card span { color: var(--muted); font-size: 13px; }
+</style>
+<main contenteditable="true" spellcheck="false">
+  <header><p>Field notes · Week 12</p></header>
+  <h1>Notes from the tide pools</h1>
+  <p>We walked the north shore at low tide and counted what we could find in the pools below the lighthouse. The water was clear and the wind had dropped by mid-morning.</p>
+  <h2>What we saw</h2>
+  <p>Anemones were open in almost every pool. Two hermit crabs had swapped shells since last week, and a young octopus watched us from under a ledge before it slipped away.</p>
+  <div class="cards" contenteditable="false">
+    <div class="card"><b>14</b><span>pools surveyed</span></div>
+    <div class="card"><b>9</b><span>species recorded</span></div>
+    <div class="card"><b>2.1 m</b><span>tide at start</span></div>
+  </div>
+  <h2>Next time</h2>
+  <p>Start an hour earlier to catch the lowest water, and bring a second clipboard so two people can record at once.</p>
+</main>
+<script>
+  // Pages can tell the agent more than the selection: rex-canvas includes this in `rex-canvas context`.
+  window.rexCanvasContext = () => ({ sections: [...document.querySelectorAll('h2')].map((h) => h.textContent) });
+</script>
+</html>

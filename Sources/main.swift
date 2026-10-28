@@ -7,12 +7,15 @@ rex-canvas: open a web page in a canvas beside a Rex pane.
   rex-canvas navigate URL [--id ID]
   rex-canvas list
   rex-canvas focus|reload|close [--id ID]
+  rex-canvas context [--id ID]       what the person is looking at: page, selection, last click, page-provided context
+  rex-canvas ask QUESTION [--id ID]  send a question with the page context to the agent pane, as the Ask agent field does
   rex-canvas eval JS [--id ID]
   rex-canvas screenshot PATH [--id ID]
   rex-canvas quit
 
 open splits BLOCK (default $REX_BLOCK) and covers the new pane with the page. URL may be a URL, host:port or a file path.
-Inside a canvas: cmd+option+arrow returns to Rex, cmd+W closes, cmd+R reloads, cmd+[ and cmd+] go back and forward.
+Inside a canvas: cmd+shift+A (or the Ask agent button) sends a question with the selection to the agent pane;
+cmd+option+arrow returns to Rex, cmd+W closes, cmd+R reloads, cmd+[ and cmd+] go back and forward.
 """
 
 func fail(_ message: String) -> Never {
@@ -142,6 +145,11 @@ case "list":
     printJSON(reply["canvases"] ?? [])
 case "focus", "reload", "close":
     _ = request(["command": raw[1], "id": id])
+case "ask":
+    guard let text = args.positional.first else { fail("ask needs a question") }
+    print(request(["command": "ask", "id": id, "text": text])["result"] as! String)
+case "context":
+    printJSON(request(["command": "context", "id": id])["context"] ?? [:])
 case "eval":
     guard let js = args.positional.first else { fail("eval needs JavaScript") }
     printJSON(["value": request(["command": "eval", "id": id, "js": js])["value"] ?? NSNull()])
