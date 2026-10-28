@@ -8,13 +8,13 @@ Rex's Mac app can only draw terminal panes. rex-canvas splits the agent's pane a
 
 ```sh
 ./build.sh
-bin/rex-canvas open http://127.0.0.1:4646/        # splits $REX_BLOCK to the right
-bin/rex-canvas open ~/path/page.html --id deck --ratio 40
+bin/rex-canvas open http://localhost:3000/         # splits $REX_BLOCK to the right
+bin/rex-canvas open ~/path/page.html --id app --ratio 40
 bin/rex-canvas list
-bin/rex-canvas navigate URL --id deck
-bin/rex-canvas eval 'document.title' --id deck    # agents can read page state
-bin/rex-canvas screenshot /tmp/deck.png --id deck # agents can see the page
-bin/rex-canvas focus|reload|close --id deck
+bin/rex-canvas navigate URL --id app
+bin/rex-canvas eval 'document.title' --id app    # agents can read page state
+bin/rex-canvas screenshot /tmp/app.png --id app # agents can see the page
+bin/rex-canvas focus|reload|close --id app
 ```
 
 Inside a canvas:
@@ -50,3 +50,7 @@ Accessibility permission comes from Rex: processes started in a Rex pane are cov
 - The canvas has its own WebKit storage, so sites like GitHub need one sign-in inside it.
 - While Rex is in front, the canvas floats, so Rex's command palette or sheets could appear under it if they overlap the canvas pane.
 - Only tested on one display, with Rex expanded to fill the screen (not native full screen).
+
+## Licence
+
+MIT. See [LICENSE](./LICENSE).
