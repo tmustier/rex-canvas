@@ -31,7 +31,7 @@ Run these from a Rex pane:
 rex-canvas open http://localhost:3000/          # splits $REX_BLOCK to the right
 rex-canvas open ~/path/page.html --id app --ratio 40
 rex-canvas open examples/demo.html              # a small demo page
-rex-canvas list
+rex-canvas list                                 # canvases beside this pane (--all for every canvas)
 rex-canvas navigate URL --id app
 rex-canvas context --id app                     # page, selection, last click, page-provided context
 rex-canvas ask "Make this shorter" --id app     # send a question to the agent pane, as the Ask agent field does
@@ -50,6 +50,8 @@ Inside a canvas:
 | cmd+R | Reload |
 | cmd+[ and cmd+] | Back and forward |
 | cmd+= / cmd+- / cmd+0 | Zoom |
+
+Commands act on the canvases beside the pane they run in. Without `--id`, they use the only canvas beside it. `open --id` won't take over a canvas that belongs to another pane.
 
 Focusing the canvas pane in Rex, by clicking its header or with Rex's pane-focus keys, moves the keyboard into the canvas.
 

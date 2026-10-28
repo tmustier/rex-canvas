@@ -5,7 +5,7 @@ rex-canvas: open a web page in a canvas beside a Rex pane.
 
   rex-canvas open URL [--id ID] [--beside BLOCK] [--session SESSION] [--ratio PERCENT] [--split right|left|below|above]
   rex-canvas navigate URL [--id ID]
-  rex-canvas list
+  rex-canvas list [--all]             canvases beside this pane, or every canvas
   rex-canvas focus|reload|close [--id ID]
   rex-canvas context [--id ID]       what the person is looking at: page, selection, last click, page-provided context
   rex-canvas ask QUESTION [--id ID]  send a question with the page context to the agent pane, as the Ask agent field does
@@ -29,6 +29,7 @@ func printJSON(_ value: Any) {
 }
 
 struct Arguments {
+    static let flags: Set<String> = ["all"]
     var positional: [String] = []
     var options: [String: String] = [:]
 
@@ -37,7 +38,9 @@ struct Arguments {
         while let item = iterator.next() {
             if item.hasPrefix("--") {
                 let name = String(item.dropFirst(2))
-                if let equals = name.firstIndex(of: "=") {
+                if Arguments.flags.contains(name) {
+                    options[name] = "true"
+                } else if let equals = name.firstIndex(of: "=") {
                     options[String(name[..<equals])] = String(name[name.index(after: equals)...])
                 } else {
                     guard let value = iterator.next() else { fail("--\(name) needs a value") }
@@ -50,8 +53,15 @@ struct Arguments {
     }
 }
 
+/// Every request names the calling pane, so commands without --id act on the canvas beside it.
+func scoped(_ body: JSON) -> JSON {
+    var body = body
+    if let block = ProcessInfo.processInfo.environment["REX_BLOCK"] { body["from_block"] = block }
+    return body
+}
+
 func request(_ body: JSON) -> JSON {
-    guard let reply = ipcRequest(body) else { fail("helper is not running") }
+    guard let reply = ipcRequest(scoped(body)) else { fail("helper is not running") }
     if reply["ok"] as? Bool != true { fail(reply["error"] as? String ?? "request failed") }
     return reply
 }
@@ -103,9 +113,10 @@ func openCanvas(_ args: Arguments) {
     guard let beside = args.options["beside"] ?? environment["REX_BLOCK"] else { fail("pass --beside or run inside Rex") }
     guard ensureHelper() else { fail("helper did not start; see \(Paths.log)") }
 
-    let existing = request(["command": "list"])["canvases"] as? [JSON] ?? []
+    let existing = request(["command": "list", "all": true])["canvases"] as? [JSON] ?? []
     let taken = Set(existing.compactMap { $0["id"] as? String })
-    if let id = args.options["id"], taken.contains(id) {
+    if let id = args.options["id"], let canvas = existing.first(where: { $0["id"] as? String == id }) {
+        guard canvas["agent_block"] as? String == beside else { fail("canvas \(id) belongs to another pane; choose another --id") }
         printJSON(request(["command": "navigate", "id": id, "url": url])["canvas"]!)
         return
     }
@@ -141,7 +152,7 @@ case "navigate":
     guard let target = args.positional.first else { fail("navigate needs a URL") }
     printJSON(request(["command": "navigate", "id": id, "url": normalise(target)])["canvas"]!)
 case "list":
-    guard let reply = ipcRequest(["command": "list"]) else { printJSON([] as [Any]); exit(0) }
+    guard let reply = ipcRequest(scoped(["command": "list", "all": args.options["all"] == "true"])) else { printJSON([] as [Any]); exit(0) }
     printJSON(reply["canvases"] ?? [])
 case "focus", "reload", "close":
     _ = request(["command": raw[1], "id": id])

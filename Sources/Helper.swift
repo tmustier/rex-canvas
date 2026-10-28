@@ -55,7 +55,8 @@ final class Helper: NSObject, NSApplicationDelegate {
         case "ping":
             reply(["ok": true, "pid": Int(getpid())])
         case "list":
-            reply(["ok": true, "canvases": canvases.values.sorted { $0.id < $1.id }.map(describe)])
+            let mine = request["all"] as? Bool == true ? Array(canvases.values) : besideCaller(request)
+            reply(["ok": true, "canvases": mine.sorted { $0.id < $1.id }.map(describe)])
         case "ensure":
             if let canvas = canvases[id] {
                 reply(["ok": true, "created": false, "canvas": describe(canvas)])
@@ -77,12 +78,22 @@ final class Helper: NSObject, NSApplicationDelegate {
             reply(["ok": true])
             DispatchQueue.main.async { NSApp.terminate(nil) }
         default:
-            guard let canvas = canvases[id] ?? (id.isEmpty && canvases.count == 1 ? canvases.values.first : nil) else {
-                reply(["ok": false, "error": "no canvas \(id.isEmpty ? "(pass --id)" : id)"])
+            let candidates = id.isEmpty ? besideCaller(request) : canvases[id].map { [$0] } ?? []
+            guard candidates.count == 1, let canvas = candidates.first else {
+                let problem = id.isEmpty
+                    ? (candidates.isEmpty ? "no canvas beside this pane" : "several canvases beside this pane; pass --id")
+                    : "no canvas \(id)"
+                reply(["ok": false, "error": problem])
                 return
             }
             perform(command, on: canvas, request: request, reply: reply)
         }
+    }
+
+    /// Canvases opened beside the pane that sent the request, or every canvas when the caller isn't in Rex.
+    private func besideCaller(_ request: JSON) -> [Canvas] {
+        guard let block = request["from_block"] as? String else { return Array(canvases.values) }
+        return canvases.values.filter { $0.agentBlock == block }
     }
 
     private func perform(_ command: String, on canvas: Canvas, request: JSON, reply: @escaping (JSON) -> Void) {

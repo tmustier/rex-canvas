@@ -15,10 +15,10 @@ rex-canvas open ./report.html --id report --ratio 40
 rex-canvas navigate http://localhost:3000/settings --id report
 rex-canvas reload --id report
 rex-canvas close --id report                     # also closes the pane
-rex-canvas list
+rex-canvas list                                   # canvases beside your pane
 ```
 
-Reuse an open canvas with `navigate` instead of opening another. Omit `--id` when only one canvas is open.
+Commands act on canvases beside your own pane. If `rex-canvas list` shows one, reuse it with `navigate` instead of opening another. Omit `--id` when there is only one. Canvases beside other panes belong to other work: leave them alone.
 
 ## See what the person sees
 
