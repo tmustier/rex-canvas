@@ -87,7 +87,6 @@ final class Canvas: NSObject, NSTextFieldDelegate {
     let web: CanvasWebView
     var url: String
     var shown = false
-    var raisedForRex = false
     var frame = NSRect.zero
     /// The placeholder pane's terminal element, re-read cheaply between full scans.
     var terminal: AXUIElement?

@@ -280,31 +280,39 @@ final class Helper: NSObject, NSApplicationDelegate {
         observe(pid: pid)
         let (panes, dividers) = RexAX.scan(pid: pid)
         self.dividers = dividers
-        let windows = RexAX.onScreenWindows(pid: pid)
+        let order = RexAX.windowOrder()
+        let ownWindows = Set(order.filter { $0.pid == getpid() }.map(\.number))
+        let frontmostOther = order.first { $0.pid != getpid() && $0.layer == 0 }?.number
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let rexInFront = front == pid || front == getpid()
 
         for canvas in canvases.values {
             guard let pane = panes.first(where: { Helper.title($0.title, matches: canvas.id) }),
-                  let rexWindow = windows.first(where: { $0.bounds == pane.windowFrame }) else {
+                  order.contains(where: { $0.number == pane.windowNumber }) else {
                 canvas.terminal = nil
                 hide(canvas)
                 continue
             }
             canvas.terminal = pane.terminal
             place(canvas, pane.content)
-            if !canvas.shown || canvas.raisedForRex != rexInFront {
-                if rexInFront {
-                    // Stay above the Rex window while Rex or the canvas has focus.
-                    canvas.window.level = .floating
-                    canvas.window.orderFront(nil)
-                } else {
-                    // Another app is in front: sit directly above the Rex window so that app still covers us.
-                    canvas.window.level = .normal
-                    canvas.window.order(.above, relativeTo: rexWindow.number)
-                }
+            // Float only while the canvas's own Rex window is the frontmost window and Rex or the canvas is active.
+            // Otherwise sit directly above that Rex window, so anything in front of it, including another Rex
+            // window, also covers the canvas.
+            let float = rexInFront && frontmostOther == pane.windowNumber
+            let placed: Bool
+            if float {
+                placed = canvas.shown && canvas.window.level == .floating
+            } else if let canvasIndex = order.firstIndex(where: { $0.number == canvas.window.windowNumber }),
+                      let rexIndex = order.firstIndex(where: { $0.number == pane.windowNumber }), canvasIndex < rexIndex {
+                placed = canvas.window.level == .normal
+                    && order[(canvasIndex + 1)..<rexIndex].allSatisfy { ownWindows.contains($0.number) }
+            } else {
+                placed = false
+            }
+            if !placed {
+                canvas.window.level = float ? .floating : .normal
+                if float { canvas.window.orderFront(nil) } else { canvas.window.order(.above, relativeTo: pane.windowNumber) }
                 canvas.shown = true
-                canvas.raisedForRex = rexInFront
             }
         }
         syncFocusFromRex(pid: pid, front: front, panes: panes)
