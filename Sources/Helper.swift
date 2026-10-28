@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import QuartzCore
 import WebKit
 
 final class CanvasWindow: NSWindow {
@@ -79,8 +80,12 @@ final class Helper: NSObject, NSApplicationDelegate {
             log("could not listen on \(Paths.socket): \(error)")
             exit(1)
         }
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [unowned self] _ in self.tick(force: false) }
-        RunLoop.main.add(timer, forMode: .common)
+        // Tick on the display's refresh (120 Hz on ProMotion screens) so the canvas keeps up with Rex's own redraws.
+        if let screen = NSScreen.screens.first {
+            let link = screen.displayLink(target: self, selector: #selector(displayTick))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common)
+        }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [unowned self] _ in self.markHot(scan: true) }
@@ -89,6 +94,8 @@ final class Helper: NSObject, NSApplicationDelegate {
         }
         log("helper ready on \(Paths.socket)")
     }
+
+    @objc private func displayTick() { tick(force: false) }
 
     // MARK: Requests
 
@@ -182,13 +189,13 @@ final class Helper: NSObject, NSApplicationDelegate {
 
     // MARK: Placement
 
-    /// Asks for 60 Hz placement for a short while; `scan` also asks for a full accessibility scan.
+    /// Asks for per-refresh placement for a short while; `scan` also asks for a full accessibility scan.
     private func markHot(scan: Bool = false) {
         hotUntil = Date().addingTimeInterval(0.6)
         if scan { needsScan = true }
     }
 
-    /// Runs at 60 Hz while something is changing (mouse held, Rex events, app switches) and at 5 Hz otherwise.
+    /// Runs on every display refresh while something is changing (mouse held, Rex events, app switches) and at 5 Hz otherwise.
     /// Between full scans it only re-reads each canvas pane's frame, which costs two accessibility calls.
     private func tick(force: Bool) {
         let now = Date()
