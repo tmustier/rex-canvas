@@ -36,29 +36,41 @@ enum RexAX {
         return CGRect(origin: origin, size: size)
     }
 
-    static func panes(pid: pid_t) -> [RexPane] {
+    /// Panes and pane dividers (AXSplitter) in every visible Rex window.
+    static func scan(pid: pid_t) -> (panes: [RexPane], dividers: [CGRect]) {
         let application = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(application, 0.25)
-        var result: [RexPane] = []
+        var panes: [RexPane] = []
+        var dividers: [CGRect] = []
         for window in attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
             if attribute(window, kAXMinimizedAttribute) as? Bool == true { continue }
-            collect(window, windowFrame: frame(window), depth: 0, into: &result)
+            collect(window, windowFrame: frame(window), depth: 0, panes: &panes, dividers: &dividers)
         }
-        return result
+        return (panes, dividers)
     }
 
-    private static func collect(_ element: AXUIElement, windowFrame: CGRect, depth: Int, into result: inout [RexPane]) {
+    private static func collect(_ element: AXUIElement, windowFrame: CGRect, depth: Int,
+                                panes: inout [RexPane], dividers: inout [CGRect]) {
         for child in attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
             let role = string(child, kAXRoleAttribute)
             let description = string(child, kAXDescriptionAttribute)
             if role == kAXGroupRole, description == "Sidebar Tabs" { continue }
             if role == kAXTextAreaRole, description == "Terminal" {
-                result.append(RexPane(title: string(element, kAXDescriptionAttribute), content: frame(child),
-                                      terminal: child, windowFrame: windowFrame))
+                panes.append(RexPane(title: string(element, kAXDescriptionAttribute), content: frame(child),
+                                     terminal: child, windowFrame: windowFrame))
+            } else if role == kAXSplitterRole {
+                dividers.append(frame(child))
             } else if depth < 10 {
-                collect(child, windowFrame: windowFrame, depth: depth + 1, into: &result)
+                collect(child, windowFrame: windowFrame, depth: depth + 1, panes: &panes, dividers: &dividers)
             }
         }
+    }
+
+    /// The mouse position in global top-left coordinates, the same space as accessibility frames.
+    static func mouseLocation() -> CGPoint {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let point = NSEvent.mouseLocation
+        return CGPoint(x: point.x, y: primaryHeight - point.y)
     }
 
     static func focusedElement(pid: pid_t) -> AXUIElement? {
@@ -79,6 +91,19 @@ enum RexAX {
                   let number = entry[kCGWindowNumber as String] as? Int else { return nil }
             return (bounds, number)
         }
+    }
+
+    /// The process that owns the frontmost ordinary window under a point, ignoring windows of `excluding`.
+    static func windowOwner(at point: CGPoint, excluding: pid_t) -> pid_t? {
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for entry in info {
+            guard let pid = entry[kCGWindowOwnerPID as String] as? pid_t, pid != excluding,
+                  entry[kCGWindowLayer as String] as? Int == 0,
+                  let boundsDict = entry[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict), bounds.contains(point) else { continue }
+            return pid
+        }
+        return nil
     }
 
     /// Converts a global top-left rectangle to AppKit's bottom-left screen coordinates,

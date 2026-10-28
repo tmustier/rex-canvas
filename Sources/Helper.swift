@@ -25,6 +25,8 @@ final class Canvas {
     var frame = NSRect.zero
     /// The placeholder pane's terminal element, re-read cheaply between full scans.
     var terminal: AXUIElement?
+    /// The pane's terminal area in global top-left coordinates, as last placed.
+    var content = CGRect.zero
 
     init(id: String, url: String, session: String, placeholder: String, agentBlock: String) {
         self.id = id
@@ -71,6 +73,9 @@ final class Helper: NSObject, NSApplicationDelegate {
     private var eventStreams: [String: Process] = [:]
     private var observer: AXObserver?
     private var observedPid: pid_t = 0
+    private var dividers: [CGRect] = []
+    private var mouseWasDown = false
+    private var dividerDrag: DividerDrag?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -198,6 +203,14 @@ final class Helper: NSObject, NSApplicationDelegate {
     /// Runs on every display refresh while something is changing (mouse held, Rex events, app switches) and at 5 Hz otherwise.
     /// Between full scans it only re-reads each canvas pane's frame, which costs two accessibility calls.
     private func tick(force: Bool) {
+        let mouseDown = NSEvent.pressedMouseButtons & 1 != 0
+        if mouseDown, !mouseWasDown { beginDividerDrag() }
+        if !mouseDown, mouseWasDown, dividerDrag != nil { endDividerDrag() }
+        mouseWasDown = mouseDown
+        if let drag = dividerDrag {
+            followDivider(drag)
+            return
+        }
         let now = Date()
         let hot = force || now < hotUntil || NSEvent.pressedMouseButtons != 0
         if !hot, now.timeIntervalSince(lastTick) < 0.2 { return }
@@ -217,19 +230,94 @@ final class Helper: NSObject, NSApplicationDelegate {
             guard let terminal = canvas.terminal else { continue }
             let content = RexAX.frame(terminal)
             if content.isEmpty { needsScan = true; continue }
-            let target = RexAX.appKitRect(content)
-            if target != canvas.frame {
-                canvas.window.setFrame(target, display: true)
-                canvas.frame = target
+            place(canvas, content)
+        }
+    }
+
+    private func place(_ canvas: Canvas, _ content: CGRect) {
+        canvas.content = content
+        let target = RexAX.appKitRect(content)
+        if target != canvas.frame {
+            canvas.window.setFrame(target, display: true)
+            canvas.frame = target
+        }
+    }
+
+    // MARK: Divider drags
+
+    /// Which edge of a canvas a divider drag moves, the pointer and pane rectangle at the start, and the latest prediction.
+    struct DividerDrag {
+        enum Edge { case left, right, top, bottom }
+        let canvasID: String
+        let edge: Edge
+        let startMouse: CGPoint
+        let startContent: CGRect
+        var predicted: CGRect
+        var frames = 0
+    }
+
+    /// Asking Rex where the pane is during a drag waits on Rex's busy main thread, which leaves the canvas a frame
+    /// or two behind. Instead, when a drag starts on a divider next to a canvas, move that canvas edge with the pointer
+    /// and check against Rex once the button is released.
+    private func beginDividerDrag() {
+        let mouse = RexAX.mouseLocation()
+        guard let divider = dividers.first(where: { $0.insetBy(dx: -4, dy: -4).contains(mouse) }),
+              let rex = RexAX.app(), RexAX.windowOwner(at: mouse, excluding: getpid()) == rex.processIdentifier else { return }
+        let vertical = divider.height > divider.width
+        for canvas in canvases.values where canvas.shown {
+            let pane = canvas.content
+            let edge: DividerDrag.Edge?
+            if vertical, divider.maxY > pane.minY, divider.minY < pane.maxY {
+                edge = abs(divider.maxX - pane.minX) < 24 && divider.midX < pane.minX ? .left
+                    : abs(divider.minX - pane.maxX) < 24 && divider.midX > pane.maxX ? .right : nil
+            } else if !vertical, divider.maxX > pane.minX, divider.minX < pane.maxX {
+                edge = abs(divider.maxY - pane.minY) < 24 && divider.midY < pane.minY ? .top
+                    : abs(divider.minY - pane.maxY) < 24 && divider.midY > pane.maxY ? .bottom : nil
+            } else {
+                edge = nil
+            }
+            if let edge {
+                dividerDrag = DividerDrag(canvasID: canvas.id, edge: edge, startMouse: mouse, startContent: pane, predicted: pane)
+                return
             }
         }
+    }
+
+    private func followDivider(_ drag: DividerDrag) {
+        guard let canvas = canvases[drag.canvasID] else { dividerDrag = nil; return }
+        let mouse = RexAX.mouseLocation()
+        let dx = mouse.x - drag.startMouse.x, dy = mouse.y - drag.startMouse.y
+        var rect = drag.startContent
+        switch drag.edge {
+        case .left: rect.origin.x += dx; rect.size.width -= dx
+        case .right: rect.size.width += dx
+        case .top: rect.origin.y += dy; rect.size.height -= dy
+        case .bottom: rect.size.height += dy
+        }
+        guard rect.width >= 40, rect.height >= 40 else { return }
+        place(canvas, rect)
+        dividerDrag?.predicted = rect
+        dividerDrag?.frames += 1
+    }
+
+    private func endDividerDrag() {
+        guard let drag = dividerDrag else { return }
+        dividerDrag = nil
+        layout()
+        if let canvas = canvases[drag.canvasID] {
+            let error = max(abs(canvas.content.minX - drag.predicted.minX), abs(canvas.content.maxX - drag.predicted.maxX),
+                            abs(canvas.content.minY - drag.predicted.minY), abs(canvas.content.maxY - drag.predicted.maxY))
+            log("divider drag on \(drag.canvasID): \(drag.frames) frames, off by \(Int(error.rounded())) pt at release")
+        }
+        markHot(scan: true)
     }
 
     private func layout() {
         guard let rex = RexAX.app(), !rex.isHidden else { canvases.values.forEach(hide); return }
         let pid = rex.processIdentifier
         observe(pid: pid)
-        let panes = RexAX.panes(pid: pid)
+        let (panes, dividers) = RexAX.scan(pid: pid)
+        self.dividers = dividers
         let windows = RexAX.onScreenWindows(pid: pid)
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let rexInFront = front == pid || front == getpid()
@@ -242,11 +330,7 @@ final class Helper: NSObject, NSApplicationDelegate {
                 continue
             }
             canvas.terminal = pane.terminal
-            let target = RexAX.appKitRect(pane.content)
-            if target != canvas.frame {
-                canvas.window.setFrame(target, display: true)
-                canvas.frame = target
-            }
+            place(canvas, pane.content)
             if !canvas.shown || canvas.raisedForRex != rexInFront {
                 if rexInFront {
                     // Stay above the Rex window while Rex or the canvas has focus.
