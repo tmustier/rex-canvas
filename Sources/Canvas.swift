@@ -26,6 +26,12 @@ final class AddressField: NSTextField {
     }
 }
 
+/// The toolbar lays out its own items, so the URL bar never runs under the Ask agent button at narrow widths.
+final class ToolbarView: NSVisualEffectView {
+    var onResize: () -> Void = {}
+    override func resizeSubviews(withOldSize oldSize: NSSize) { onResize() }
+}
+
 /// Receives `window.rexCanvas.ask(...)` from the page. Pages can only open the ask field;
 /// sending always needs the person to press Enter.
 private final class PageBridge: NSObject, WKScriptMessageHandler {
@@ -199,7 +205,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
 
     private func makeToolbar(width: CGFloat, top: CGFloat) -> NSView {
         let height = Canvas.toolbarHeight
-        let bar = NSVisualEffectView(frame: NSRect(x: 0, y: top - height, width: width, height: height))
+        let bar = ToolbarView(frame: NSRect(x: 0, y: top - height, width: width, height: height))
         bar.material = .headerView
         bar.autoresizingMask = [.width, .minYMargin]
 
@@ -217,9 +223,6 @@ final class Canvas: NSObject, NSTextFieldDelegate {
             bar.addSubview(button)
         }
 
-        let textX: CGFloat = 84, buttonWidth: CGFloat = 92
-        let textFrame = NSRect(x: textX, y: 6, width: width - textX - buttonWidth - 14, height: 18)
-        addressField.frame = textFrame.insetBy(dx: 0, dy: -1)
         addressField.font = .systemFont(ofSize: 12)
         addressField.textColor = .secondaryLabelColor
         addressField.placeholderString = "Enter a URL or file path (⌘L)"
@@ -227,32 +230,50 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         addressField.focusRingType = .none
         addressField.lineBreakMode = .byTruncatingMiddle
         addressField.cell?.isScrollable = true
-        addressField.autoresizingMask = [.width]
         addressField.delegate = self
         addressField.onFocus = { [weak self] in self?.beginEditingAddress() }
         bar.addSubview(addressField)
 
-        askField.frame = textFrame.insetBy(dx: 0, dy: -1)
         askField.font = .systemFont(ofSize: 12)
         askField.placeholderString = "Ask the agent about this page. Your selection is included. Enter sends, Esc cancels."
         askField.bezelStyle = .roundedBezel
         askField.focusRingType = .none
-        askField.autoresizingMask = [.width]
         askField.delegate = self
         askField.isHidden = true
         bar.addSubview(askField)
 
-        askButton.title = "Ask agent"
         askButton.bezelStyle = .inline
         askButton.controlSize = .small
         askButton.font = .systemFont(ofSize: 11, weight: .medium)
         askButton.toolTip = "Ask the agent about this page (⌘⇧A)"
         askButton.target = self
         askButton.action = #selector(askButtonPressed)
-        askButton.frame = NSRect(x: width - buttonWidth - 8, y: 5, width: buttonWidth, height: 20)
-        askButton.autoresizingMask = [.minXMargin]
         bar.addSubview(askButton)
+        bar.onResize = { [weak self, unowned bar] in self?.layoutToolbar(width: bar.bounds.width) }
+        layoutToolbar(width: width)
         return bar
+    }
+
+    /// Below this width the Ask agent button shows an icon instead of its label.
+    private static let compactToolbarWidth: CGFloat = 380 // agent-default (not a user rule): 2026-10-29
+
+    private func layoutToolbar(width: CGFloat) {
+        let compact = width < Canvas.compactToolbarWidth
+        if compact {
+            askButton.title = ""
+            askButton.image = NSImage(systemSymbolName: "bubble.left", accessibilityDescription: "Ask agent")
+            askButton.imagePosition = .imageOnly
+        } else {
+            askButton.image = nil
+            askButton.title = "Ask agent"
+            askButton.imagePosition = .noImage
+        }
+        let buttonWidth: CGFloat = compact ? 28 : 92
+        askButton.frame = NSRect(x: width - buttonWidth - 8, y: 5, width: buttonWidth, height: 20)
+        let textX: CGFloat = 84
+        let textFrame = NSRect(x: textX, y: 5, width: max(0, askButton.frame.minX - 6 - textX), height: 20)
+        addressField.frame = textFrame
+        askField.frame = textFrame
     }
 
     private var editingAddress: Bool { addressField.currentEditor() != nil }
