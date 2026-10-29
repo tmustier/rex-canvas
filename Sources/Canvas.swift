@@ -15,6 +15,17 @@ final class FirstClickButton: NSButton {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// The URL bar. It shows the page address while idle and the full URL, selected, while being edited.
+final class AddressField: NSTextField {
+    var onFocus: () -> Void = {}
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func becomeFirstResponder() -> Bool {
+        guard super.becomeFirstResponder() else { return false }
+        onFocus()
+        return true
+    }
+}
+
 /// Receives `window.rexCanvas.ask(...)` from the page. Pages can only open the ask field;
 /// sending always needs the person to press Enter.
 private final class PageBridge: NSObject, WKScriptMessageHandler {
@@ -126,7 +137,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
     var onSubmitAsk: (String) -> Void = { _ in }
 
     private let bridge = PageBridge()
-    private let titleLabel = NSTextField(labelWithString: "")
+    private let addressField = AddressField()
     private let askField = NSTextField()
     private let askButton = FirstClickButton()
     private var observations: [NSKeyValueObservation] = []
@@ -206,12 +217,18 @@ final class Canvas: NSObject, NSTextFieldDelegate {
 
         let textX: CGFloat = 84, buttonWidth: CGFloat = 92
         let textFrame = NSRect(x: textX, y: 6, width: width - textX - buttonWidth - 14, height: 18)
-        titleLabel.frame = textFrame
-        titleLabel.font = .systemFont(ofSize: 12)
-        titleLabel.textColor = .secondaryLabelColor
-        titleLabel.lineBreakMode = .byTruncatingMiddle
-        titleLabel.autoresizingMask = [.width]
-        bar.addSubview(titleLabel)
+        addressField.frame = textFrame.insetBy(dx: 0, dy: -1)
+        addressField.font = .systemFont(ofSize: 12)
+        addressField.textColor = .secondaryLabelColor
+        addressField.placeholderString = "Enter a URL or file path (⌘L)"
+        addressField.bezelStyle = .roundedBezel
+        addressField.focusRingType = .none
+        addressField.lineBreakMode = .byTruncatingMiddle
+        addressField.cell?.isScrollable = true
+        addressField.autoresizingMask = [.width]
+        addressField.delegate = self
+        addressField.onFocus = { [weak self] in self?.beginEditingAddress() }
+        bar.addSubview(addressField)
 
         askField.frame = textFrame.insetBy(dx: 0, dy: -1)
         askField.font = .systemFont(ofSize: 12)
@@ -236,16 +253,56 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         return bar
     }
 
-    private func refreshTitle() {
-        guard Date() > noticeUntil else { return }
-        let title = web.title ?? ""
-        let place = web.url.map { $0.isFileURL ? $0.lastPathComponent : ($0.host ?? $0.absoluteString) } ?? ""
-        titleLabel.stringValue = [title, place].filter { !$0.isEmpty }.joined(separator: "  ·  ")
+    private var editingAddress: Bool { addressField.currentEditor() != nil }
+    private var currentURL: String { web.url?.absoluteString ?? url }
+
+    /// The address without its scheme, with file paths shortened to `~`.
+    private var displayAddress: String {
+        guard let page = web.url ?? URL(string: url) else { return url }
+        if page.isFileURL { return (page.path as NSString).abbreviatingWithTildeInPath + (page.fragment.map { "#" + $0 } ?? "") }
+        let text = page.absoluteString
+        guard let range = text.range(of: "://") else { return text }
+        return String(text[range.upperBound...])
     }
 
-    /// Shows a short message in place of the title, such as confirming that a question was sent.
+    private func refreshTitle() {
+        addressField.toolTip = web.title
+        guard Date() > noticeUntil, !editingAddress else { return }
+        addressField.stringValue = displayAddress
+    }
+
+    func focusAddress() {
+        guard shown else { return }
+        if !askField.isHidden { hideAsk() }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(addressField)
+    }
+
+    private func beginEditingAddress() {
+        noticeUntil = .distantPast
+        addressField.textColor = .labelColor
+        addressField.stringValue = currentURL
+        DispatchQueue.main.async { [weak self] in self?.addressField.currentEditor()?.selectAll(nil) }
+    }
+
+    private func endEditingAddress(navigateTo target: String?) {
+        addressField.textColor = .secondaryLabelColor
+        window.makeFirstResponder(web)
+        if let target { load(normalise(target)) }
+        addressField.stringValue = displayAddress
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard notification.object as? NSTextField === addressField else { return }
+        addressField.textColor = .secondaryLabelColor
+        refreshTitle()
+    }
+
+    /// Shows a short message in place of the address, such as confirming that a question was sent.
     func notice(_ text: String) {
-        titleLabel.stringValue = text
+        guard !editingAddress else { return }
+        addressField.stringValue = text
         noticeUntil = Date().addingTimeInterval(2.5)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in self?.refreshTitle() }
     }
@@ -263,7 +320,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         if askField.isHidden { web.evaluateJavaScript("window.rexCanvas && window.rexCanvas.pin()") }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        titleLabel.isHidden = true
+        addressField.isHidden = true
         askField.isHidden = false
         if !prefill.isEmpty { askField.stringValue = prefill }
         window.makeFirstResponder(askField)
@@ -272,12 +329,24 @@ final class Canvas: NSObject, NSTextFieldDelegate {
 
     private func hideAsk() {
         askField.isHidden = true
-        titleLabel.isHidden = false
+        addressField.isHidden = false
         window.makeFirstResponder(web)
         web.evaluateJavaScript("window.rexCanvas && window.rexCanvas.unpin()")
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        if control === addressField {
+            if selector == #selector(NSResponder.insertNewline(_:)) {
+                let target = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                endEditingAddress(navigateTo: target.isEmpty ? nil : target)
+                return true
+            }
+            if selector == #selector(NSResponder.cancelOperation(_:)) {
+                endEditingAddress(navigateTo: nil)
+                return true
+            }
+            return false
+        }
         if selector == #selector(NSResponder.insertNewline(_:)) {
             let question = askField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !question.isEmpty else { return true }

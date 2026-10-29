@@ -377,6 +377,7 @@ final class Helper: NSObject, NSApplicationDelegate {
         switch event.charactersIgnoringModifiers {
         case "w": close(canvas, closePlaceholder: true)
         case "r": canvas.web.reload()
+        case "l": canvas.focusAddress()
         case "[": canvas.web.goBack()
         case "]": canvas.web.goForward()
         case "=", "+": canvas.web.pageZoom += 0.1

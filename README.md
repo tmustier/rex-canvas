@@ -59,7 +59,7 @@ Focusing the canvas pane in Rex, by clicking its header or with Rex's pane-focus
 
 ### Asking the agent
 
-The canvas has a slim toolbar with back, forward, reload, the page title and an Ask agent button. Your question is typed into the agent pane as one line, followed by Enter:
+The canvas has a slim toolbar with back, forward, reload, a URL bar (⌘L; it takes URLs, `localhost` addresses and file paths) and an Ask agent button. Your question is typed into the agent pane as one line, followed by Enter:
 
 ```
 [canvas:app] Make this heading shorter (page "Field notes" file:///…/demo.html; selected "Notes from the tide pools" in body > main > h1; full context: rex-canvas context --id app)
