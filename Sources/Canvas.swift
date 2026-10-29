@@ -170,6 +170,8 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         web.allowsBackForwardNavigationGestures = true
         root.addSubview(web)
         root.addSubview(makeToolbar(width: bounds.width, top: bounds.height))
+        // Keys go to the page when the canvas becomes active, not to the first field in the toolbar.
+        window.initialFirstResponder = web
 
         bridge.onAsk = { [weak self] text in self?.showAsk(prefill: text) }
         observations = [
@@ -296,7 +298,8 @@ final class Canvas: NSObject, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ notification: Notification) {
         guard notification.object as? NSTextField === addressField else { return }
         addressField.textColor = .secondaryLabelColor
-        refreshTitle()
+        // The field editor is still attached while this runs, so restore the short address once it has gone.
+        DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
     }
 
     /// Shows a short message in place of the address, such as confirming that a question was sent.
