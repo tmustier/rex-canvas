@@ -32,8 +32,8 @@ final class ToolbarView: NSVisualEffectView {
     override func resizeSubviews(withOldSize oldSize: NSSize) { onResize() }
 }
 
-/// Receives `window.rexCanvas.ask(...)` from the page. Pages can only open the ask field;
-/// sending always needs the person to press Enter.
+/// Receives `window.rexCanvas.ask(...)` from the page. Pages can only open the ask field, and their text
+/// is shown as a hint, never as the question: sending always needs the person to type and press Enter.
 private final class PageBridge: NSObject, WKScriptMessageHandler {
     var onAsk: (String) -> Void = { _ in }
 
@@ -43,12 +43,19 @@ private final class PageBridge: NSObject, WKScriptMessageHandler {
     }
 }
 
-/// Injected into every page: records the person's latest selection and click so the agent can ask about them,
-/// and exposes `window.rexCanvas.context()` and `window.rexCanvas.ask(text)`.
-/// A page can add its own context by defining `window.rexCanvasContext = () => ({...})`.
-private let pageScript = """
+/// The page's only API: `window.rexCanvas.ask(hint)` opens the ask field. It runs in the page's own world,
+/// so the page can replace it, which only affects that page.
+private let pageAPIScript = """
+window.rexCanvas = Object.freeze({
+  ask(hint = '') { window.webkit.messageHandlers.rexCanvas.postMessage({ type: 'ask', text: String(hint) }); },
+});
+"""
+
+/// Records the person's latest selection and click so the agent can ask about them. It runs in an isolated
+/// script world (`Canvas.world`), before the page's scripts, so the page can neither see nor replace it.
+/// The page and the canvas share the document, so selections, clicks and highlights are the real ones.
+private let trackerScript = """
 (() => {
-  if (window.rexCanvas) return;
   const describe = (node) => {
     const parts = [];
     for (let el = node; el && el.nodeType === 1 && el !== document.documentElement && parts.length < 5; el = el.parentElement) {
@@ -85,13 +92,8 @@ private let pageScript = """
       const current = String(getSelection() || '').trim();
       const selection = pinned ? pinned.selection
         : lastSelection && { ...lastSelection, current: Boolean(current) && lastSelection.text === current.slice(0, 4000) };
-      const context = { url: location.href, title: document.title, selection, click: lastClick, focused };
-      if (typeof window.rexCanvasContext === 'function') {
-        try { context.page = window.rexCanvasContext(); } catch (error) { context.page_error = String(error); }
-      }
-      return context;
+      return { selection, click: lastClick, focused };
     },
-    ask(text = '') { window.webkit.messageHandlers.rexCanvas.postMessage({ type: 'ask', text: String(text) }); },
     pin() {
       const selection = getSelection();
       const text = selection ? String(selection).trim() : '';
@@ -125,6 +127,9 @@ private let pageScript = """
 /// One canvas: a borderless window with a slim toolbar and a web view, drawn over a Rex placeholder pane.
 final class Canvas: NSObject, NSTextFieldDelegate {
     static let toolbarHeight: CGFloat = 30
+    /// The isolated script world that holds the selection and click tracker.
+    static let world = WKContentWorld.world(name: "rex-canvas")
+    private static let askPlaceholder = "Ask the agent about this page. Your selection is included. Enter sends, Esc cancels."
 
     let id: String
     let session: String
@@ -160,7 +165,9 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.userContentController.addUserScript(
-            WKUserScript(source: pageScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            WKUserScript(source: trackerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Canvas.world))
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: pageAPIScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController.add(bridge, name: "rexCanvas")
         let bounds = NSRect(x: 0, y: 0, width: 600, height: 400)
         web = CanvasWebView(frame: NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - Canvas.toolbarHeight),
@@ -179,7 +186,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         // Keys go to the page when the canvas becomes active, not to the first field in the toolbar.
         window.initialFirstResponder = web
 
-        bridge.onAsk = { [weak self] text in self?.showAsk(prefill: text) }
+        bridge.onAsk = { [weak self] hint in self?.showAsk(hint: hint) }
         observations = [
             web.observe(\.title) { [weak self] _, _ in self?.refreshTitle() },
             web.observe(\.url) { [weak self] _, _ in self?.refreshTitle() },
@@ -235,7 +242,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         bar.addSubview(addressField)
 
         askField.font = .systemFont(ofSize: 12)
-        askField.placeholderString = "Ask the agent about this page. Your selection is included. Enter sends, Esc cancels."
+        askField.placeholderString = Canvas.askPlaceholder
         askField.bezelStyle = .roundedBezel
         askField.focusRingType = .none
         askField.delegate = self
@@ -334,19 +341,26 @@ final class Canvas: NSObject, NSTextFieldDelegate {
     @objc private func goBack() { web.goBack() }
     @objc private func goForward() { web.goForward() }
     @objc private func reload() { web.reload() }
-    @objc private func askButtonPressed() { askField.isHidden ? showAsk(prefill: "") : hideAsk() }
+    @objc private func askButtonPressed() { askField.isHidden ? showAsk() : hideAsk() }
+
+    /// Runs a script in the isolated tracker world.
+    func runTracker(_ script: String, _ done: ((Result<Any, Error>) -> Void)? = nil) {
+        web.evaluateJavaScript(script, in: nil, in: Canvas.world, completionHandler: done)
+    }
 
     // MARK: Ask
 
-    func showAsk(prefill: String) {
+    /// Opens the ask field. A page-supplied hint is only a placeholder: it is never sent unless the person types it.
+    func showAsk(hint: String = "") {
         guard shown else { return }
         // Save the page selection before focus leaves the page. Script calls run in order, ahead of the focus change.
-        if askField.isHidden { web.evaluateJavaScript("window.rexCanvas && window.rexCanvas.pin()") }
+        if askField.isHidden { runTracker("rexCanvas.pin(); null") }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         addressField.isHidden = true
         askField.isHidden = false
-        if !prefill.isEmpty { askField.stringValue = prefill }
+        let visibleHint = hint.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+        askField.placeholderString = visibleHint.isEmpty ? Canvas.askPlaceholder : visibleHint
         window.makeFirstResponder(askField)
         askField.currentEditor()?.moveToEndOfDocument(nil)
     }
@@ -355,7 +369,8 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         askField.isHidden = true
         addressField.isHidden = false
         window.makeFirstResponder(web)
-        web.evaluateJavaScript("window.rexCanvas && window.rexCanvas.unpin()")
+        askField.placeholderString = Canvas.askPlaceholder
+        runTracker("rexCanvas.unpin(); null")
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
