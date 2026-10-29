@@ -47,6 +47,9 @@ private let pageScript = """
   const elementOf = (node) => node && (node.nodeType === 1 ? node : node.parentElement);
   let lastSelection = null;
   let lastClick = null;
+  // The selection saved when the ask field opens. Focus moving to the field clears the page's own selection,
+  // so it is kept here and painted with a custom highlight until the question is sent or cancelled.
+  let pinned = null;
   document.addEventListener('selectionchange', () => {
     const selection = getSelection();
     const text = selection ? String(selection).trim() : '';
@@ -63,7 +66,8 @@ private let pageScript = """
     context() {
       const focused = document.activeElement && document.activeElement !== document.body ? describe(document.activeElement) : null;
       const current = String(getSelection() || '').trim();
-      const selection = lastSelection && { ...lastSelection, current: Boolean(current) && lastSelection.text === current.slice(0, 4000) };
+      const selection = pinned ? pinned.selection
+        : lastSelection && { ...lastSelection, current: Boolean(current) && lastSelection.text === current.slice(0, 4000) };
       const context = { url: location.href, title: document.title, selection, click: lastClick, focused };
       if (typeof window.rexCanvasContext === 'function') {
         try { context.page = window.rexCanvasContext(); } catch (error) { context.page_error = String(error); }
@@ -71,6 +75,32 @@ private let pageScript = """
       return context;
     },
     ask(text = '') { window.webkit.messageHandlers.rexCanvas.postMessage({ type: 'ask', text: String(text) }); },
+    pin() {
+      const selection = getSelection();
+      const text = selection ? String(selection).trim() : '';
+      if (!text || !selection.rangeCount) { pinned = null; return; }
+      const range = selection.getRangeAt(0).cloneRange();
+      const element = elementOf(selection.anchorNode);
+      pinned = { range, selection: { text: text.slice(0, 4000), element: element ? describe(element) : null, at: new Date().toISOString(), current: true } };
+      if (window.Highlight && CSS.highlights) {
+        if (!document.getElementById('rex-canvas-highlight')) {
+          const style = document.createElement('style');
+          style.id = 'rex-canvas-highlight';
+          style.textContent = '::highlight(rex-canvas-ask) { background-color: rgba(64, 128, 255, 0.35); }';
+          document.documentElement.appendChild(style);
+        }
+        CSS.highlights.set('rex-canvas-ask', new Highlight(range));
+      }
+    },
+    unpin() {
+      if (!pinned) return;
+      const { range } = pinned;
+      pinned = null;
+      if (window.Highlight && CSS.highlights) CSS.highlights.delete('rex-canvas-ask');
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    },
   };
 })();
 """
@@ -229,6 +259,8 @@ final class Canvas: NSObject, NSTextFieldDelegate {
 
     func showAsk(prefill: String) {
         guard shown else { return }
+        // Save the page selection before focus leaves the page. Script calls run in order, ahead of the focus change.
+        if askField.isHidden { web.evaluateJavaScript("window.rexCanvas && window.rexCanvas.pin()") }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         titleLabel.isHidden = true
@@ -242,6 +274,7 @@ final class Canvas: NSObject, NSTextFieldDelegate {
         askField.isHidden = true
         titleLabel.isHidden = false
         window.makeFirstResponder(web)
+        web.evaluateJavaScript("window.rexCanvas && window.rexCanvas.unpin()")
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -249,8 +282,9 @@ final class Canvas: NSObject, NSTextFieldDelegate {
             let question = askField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !question.isEmpty else { return true }
             askField.stringValue = ""
-            hideAsk()
+            // Read the page context, saved selection included, before hiding the field releases it.
             onSubmitAsk(question)
+            hideAsk()
             return true
         }
         if selector == #selector(NSResponder.cancelOperation(_:)) {
